@@ -1,0 +1,104 @@
+# CI for vscode-markdoc
+#
+# This extension is a thin client: it starts `markdoc-ls` and adds one
+# command of its own, "New document from template". It bundles no native
+# code, so one platform-neutral `.vsix` serves every platform VS Code runs on
+# — there is no per-OS or per-arch artifact to build here the way there is
+# for the `markdoc-ls` binary itself.
+#
+# The matrix is therefore a matrix of *build hosts*, not of targets. It is
+# worth running on all of them anyway: `tsc` and `vsce` are where path
+# handling differs between Windows and the Unix hosts, and that is exactly the
+# class of break this catches. (No Intel macOS host is listed: the `macos-13`
+# image is retired.)
+#
+# The Node versions are build hosts too, not the runtime: the extension runs
+# inside VS Code's own Node, and nothing here loads it there. 20 is the floor
+# because @vscode/vsce 3.2.1 declares `"node": ">= 20"`.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pinned, as the release this repository was split out of pinned it:
+  # packaging decides what reaches a writer, and a new vsce can change that.
+  # The TOOL_ prefix keeps this out of the namespace of the tool it pins.
+  TOOL_VSCE_VERSION: "3.2.1"
+
+jobs:
+  build:
+    name: Node ${{ matrix.node }} on ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            host: linux-x86_64
+            node: 20
+          - os: ubuntu-latest
+            host: linux-x86_64
+            node: 22
+          - os: ubuntu-24.04-arm
+            host: linux-aarch64
+            node: 22
+          - os: macos-latest
+            host: macos-aarch64
+            node: 22
+          - os: windows-latest
+            host: windows-x86_64
+            node: 22
+          - os: windows-11-arm
+            host: windows-aarch64
+            node: 22
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `npm ci` and nothing else. package-lock.json is committed, so a
+      # missing or out-of-date lockfile fails here instead of being papered
+      # over by an unpinned `npm install` that would still go green.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and compile
+        run: npm run compile
+
+      - name: Check the entry point was emitted
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `main` in package.json must exist, or the extension fails to
+          # activate at runtime rather than at build time.
+          main=$(node -p "require('./package.json').main")
+          test -s "$main"
+          echo "ok: $main"
+
+      # Packaging is the step most likely to break on a manifest change, so it
+      # runs in CI even though only the release workflow keeps the result.
+      # There is no `vscode:prepublish` script: vsce packages whatever the
+      # compile step above left in out/.
+      - name: Package the extension
+        shell: bash
+        run: npx --yes "@vscode/vsce@${TOOL_VSCE_VERSION}" package --out markdoc-ci.vsix
+
+      # Reads the .vsix itself, and fails if anything the extension loads at
+      # runtime is missing from it: `main`, the other compiled modules, and
+      # the production dependency tree. Also prints what the package holds.
+      - name: Check the package carries what the extension loads
+        shell: bash
+        run: node .github/scripts/check_vsix.js markdoc-ci.vsix

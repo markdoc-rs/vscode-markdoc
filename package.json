@@ -1,0 +1,79 @@
+{
+  "name": "markdoc",
+  "displayName": "Markdoc",
+  "description": "Diagnostics, completion and navigation for a Markdoc corpus, from markdoc-ls",
+  "version": "0.1.0",
+  "publisher": "JJTC",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:markdown",
+    "onCommand:markdoc.newFromTemplate"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Markdoc",
+      "properties": {
+        "markdoc.serverPath": {
+          "type": "string",
+          "default": "markdoc-ls",
+          "description": "Path to the markdoc-ls binary. By default the one on PATH named markdoc-ls (markdoc-ls.exe on Windows). A release binary is named markdoc-ls-<platform> (check it against the .sha256 beside it): save it on PATH as markdoc-ls, or set this to its path. If your project's own setup installed it, set this to the file it installed, or put the file's directory on PATH if the file is named markdoc-ls."
+        },
+        "markdoc.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Log the LSP conversation to the Markdoc output channel."
+        },
+        "markdoc.templateDirectory": {
+          "type": "string",
+          "default": ".tooling/templates",
+          "description": "Folder of .md templates offered by “New document from template”, relative to the workspace root. Templates are ordinary documents; {{TITLE}}, {{SLUG}} and {{DATE}} are substituted when one is used."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "markdoc.restartServer",
+        "title": "Markdoc: Restart language server"
+      },
+      {
+        "command": "markdoc.newFromTemplate",
+        "title": "Markdoc: New document from template…",
+        "shortTitle": "Markdoc Document"
+      }
+    ],
+    "menus": {
+      "file/newFile": [
+        {
+          "command": "markdoc.newFromTemplate",
+          "group": "file"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/vscode": "1.85.0",
+    "typescript": "5.7.2"
+  }
+}

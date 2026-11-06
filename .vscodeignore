@@ -1,0 +1,26 @@
+# What stays out of the .vsix.
+#
+# Without this file `vsce` packages the whole checkout, so the published
+# extension would carry its own TypeScript sources and build config. Only
+# `out/` and the production dependencies are needed at runtime.
+#
+# Note the absence of a `node_modules` rule: `vsce` already prunes
+# devDependencies itself, and excluding the directory would drop
+# `vscode-languageclient`, which the extension does need.
+
+.github/**
+.vscode/**
+.vscode-test/**
+
+# TypeScript sources and build configuration; `out/` is the shipped product.
+src/**
+tsconfig.json
+**/*.ts
+**/*.tsbuildinfo
+
+# Source maps roughly double the package size. Drop the `out/` rule below if
+# you would rather have readable stack traces from user bug reports.
+out/**/*.map
+
+.gitignore
+.editorconfig

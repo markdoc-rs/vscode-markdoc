@@ -1,0 +1,141 @@
+# Release workflow for vscode-markdoc
+#
+# Triggered by pushing a SemVer tag without a `v` prefix (e.g. `0.2.0`),
+# matching the convention the sibling repos use.
+#
+# The extension bundles no native code — it locates `markdoc-ls` and starts
+# it — so there is one platform-neutral `.vsix` here rather than the four
+# bare binaries the `markdoc-ls` release publishes, one per platform, each
+# with a `.sha256` beside it. It is built once, checked for
+# everything it loads at runtime, recorded with a GitHub build-provenance
+# attestation, and published to a GitHub release with a SHA256SUMS file.
+# Install it with `code --install-extension markdoc-<tag>.vsix`.
+#
+# Verify a downloaded package with:
+#
+#   gh attestation verify markdoc-<tag>.vsix --repo markdoc-rs/vscode-markdoc
+#
+# A manual `workflow_dispatch` run builds, checks and attests the .vsix as a
+# dry run but publishes nothing; only a tag push creates the release.
+#
+# No `--no-dependencies` on `vsce package`. The release this repository was
+# split out of passed it, believing the extension had devDependencies only;
+# it has a runtime one, `vscode-languageclient`, and that flag leaves all of
+# `node_modules/` out, so its .vsix could not activate. The check after
+# packaging fails the release if that ever happens again.
+#
+# This deliberately does NOT publish to the VS Code Marketplace or Open VSX:
+# there is no step below that does. (`"private": true` in package.json is an
+# npm flag; vsce does not read it, so it is not what prevents publishing.)
+# To turn publishing on later, add, at the end of this job:
+#
+#   - name: Publish to the VS Code Marketplace
+#     if: startsWith(github.ref, 'refs/tags/')
+#     run: npx --yes "@vscode/vsce@${TOOL_VSCE_VERSION}" publish --packagePath dist/${{ steps.package.outputs.name }}
+#     env:
+#       VSCE_PAT: ${{ secrets.VSCE_PAT }}
+#
+#   - name: Publish to Open VSX
+#     if: startsWith(github.ref, 'refs/tags/')
+#     run: npx --yes ovsx publish dist/${{ steps.package.outputs.name }}
+#     env:
+#       OVSX_PAT: ${{ secrets.OVSX_PAT }}
+#
+# VSCE_PAT comes from an Azure DevOps personal access token with the
+# Marketplace "Manage" scope, for the publisher named in package.json
+# (`JJTC`).
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+" # stable:      0.2.0
+      - "[0-9]+.[0-9]+.[0-9]+-*" # pre-release: 0.2.0-rc1, 0.2.0-beta.3
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The same pin as ci.yml, so the release packages with the vsce CI used.
+  TOOL_VSCE_VERSION: "3.2.1"
+
+jobs:
+  release:
+    name: Build, attest and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creating the release
+      id-token: write # provenance signing
+      attestations: write # recording the attestation
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The tag is what users will cite in bug reports, so a tag that
+      # disagrees with package.json would publish a mislabelled extension.
+      # Exact match: a pre-release tag needs the pre-release version in
+      # package.json, which vsce accepts (it only asks for valid SemVer).
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          manifest=$(node -p "require('./package.json').version")
+          if [[ "$manifest" != "${GITHUB_REF_NAME}" ]]; then
+            echo "error: tag ${GITHUB_REF_NAME} != package.json version $manifest" >&2
+            exit 1
+          fi
+          echo "ok: tag and manifest both say $manifest"
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Package the extension
+        id: package
+        run: |
+          set -euo pipefail
+          name="markdoc-${GITHUB_REF_NAME}.vsix"
+          mkdir -p dist
+          npx --yes "@vscode/vsce@${TOOL_VSCE_VERSION}" package --out "dist/$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Check the package carries what the extension loads
+        run: node .github/scripts/check_vsix.js "dist/${{ steps.package.outputs.name }}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/${{ steps.package.outputs.name }}
+
+      - name: Checksum manifest
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum *.vsix > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: vscode-markdoc-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Create or update release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
